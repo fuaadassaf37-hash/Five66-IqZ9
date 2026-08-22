@@ -51,6 +51,7 @@ const STATE_KEYS = [
   'mil_tafaqud_archive',
   'mil_ghiyab_archive',
   'mil_person_events',
+  'mil_operational_archive',
   'mil_payroll',
   'mil_payroll_headers',
   'mil_payroll_nextId'

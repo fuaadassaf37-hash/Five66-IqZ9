@@ -15,7 +15,8 @@
   var sources = [
     ["persons", "persons"], ["khasm", "khasmRows"], ["injured", "injured"], ["martyrs", "martyrs"],
     ["hararin", "hararin"], ["tafaqud", "tafaqudArchive"], ["ghiyab", "ghiyabArchive"],
-    ["events", "personEvents"], ["payroll", "payrollRecords"], ["payrollHeaders", "payrollHeaders"]
+    ["events", "personEvents"], ["payroll", "payrollRecords"], ["payrollHeaders", "payrollHeaders"],
+    ["operational_archive", "operationalArchiveDocuments"]
   ];
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
