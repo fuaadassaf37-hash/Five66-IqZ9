@@ -4,6 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 process.env.DATA_DIR = path.join('/tmp', 'five66-iqz9-sync-db-tests');
+process.env.REQUIRE_DURABLE_SYNC = 'false';
 fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
 
 const syncDb = require('../sync-db');

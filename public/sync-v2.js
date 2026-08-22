@@ -11,6 +11,7 @@
   var snapshots = {};
   var applyingRemote = false;
   var enabled = false;
+  var startRetryTimer = null;
 
   var sources = [
     ["persons", "persons"], ["khasm", "khasmRows"], ["injured", "injured"], ["martyrs", "martyrs"],
@@ -188,6 +189,7 @@
   }
   async function start() {
     try {
+      if (startRetryTimer) { clearTimeout(startRetryTimer); startRetryTimer = null; }
       var initialBootstrap = await pull();
       enabled = true;
       if (!initialBootstrap.serverSequence) queueInitialSnapshot();
@@ -205,7 +207,10 @@
       setInterval(function () { pull().then(flush).catch(function () {}); }, 5000);
       notify("✓ المزامنة الدقيقة مفعّلة", "success");
     } catch (_) {
-      notify("⚠ تعذر تفعيل المزامنة الدقيقة؛ سيستمر الحفظ المحلي حتى عودة الخادم.", "error");
+      notify("⚠ التخزين الدائم غير متاح مؤقتاً؛ سيستمر الحفظ المحلي وستُعاد المحاولة تلقائياً.", "error");
+      if (!startRetryTimer) {
+        startRetryTimer = setTimeout(function () { startRetryTimer = null; start(); }, 5000);
+      }
     }
   }
   window.Five66Sync = { pull: pull, flush: flush, getConflicts: getConflicts, resolveConflict: resolveConflict };

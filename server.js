@@ -121,7 +121,8 @@ app.get('/api/sync/bootstrap', async (req, res) => {
     const since = Number.parseInt(req.query.since || '0', 10);
     res.json(await syncDb.bootstrap(Number.isFinite(since) ? since : 0));
   } catch (error) {
-    res.status(500).json({ ok: false, error: 'تعذر جلب تحديثات المزامنة' });
+    const statusCode = error?.statusCode || 500;
+    res.status(statusCode).json({ ok: false, error: statusCode === 503 ? 'التخزين الدائم غير متاح مؤقتاً؛ سيحتفظ التطبيق بالتعديلات محلياً ويعيد المحاولة.' : 'تعذر جلب تحديثات المزامنة' });
   }
 });
 
@@ -134,7 +135,8 @@ app.post('/api/sync/operations', async (req, res) => {
     res.json({ results: result.results, serverSequence: result.serverSequence, backend: result.backend });
   } catch (error) {
     console.error('POST /api/sync/operations error:', error);
-    res.status(500).json({ ok: false, error: 'تعذر حفظ عمليات المزامنة' });
+    const statusCode = error?.statusCode || 500;
+    res.status(statusCode).json({ ok: false, error: statusCode === 503 ? 'التخزين الدائم غير متاح مؤقتاً؛ لم تُفقد تعديلاتك وسيعيد التطبيق المحاولة.' : 'تعذر حفظ عمليات المزامنة' });
   }
 });
 

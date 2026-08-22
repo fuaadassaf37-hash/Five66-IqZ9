@@ -6,6 +6,9 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const FALLBACK_FILE = path.join(DATA_DIR, 'sync-v2.json');
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
+// التخزين المحلي في Railway مؤقت؛ لذلك نرفض اعتباره حفظاً ناجحاً افتراضياً.
+// يُسمح به فقط عند ضبط REQUIRE_DURABLE_SYNC=false صراحةً في بيئة تطوير أو طوارئ.
+const REQUIRE_DURABLE_SYNC = process.env.REQUIRE_DURABLE_SYNC !== 'false';
 const supabase = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -13,6 +16,13 @@ if (!fs.existsSync(FALLBACK_FILE)) fs.writeFileSync(FALLBACK_FILE, JSON.stringif
 
 let _healthy = Boolean(supabase);
 let _lastError = null;
+
+function durableSyncUnavailable(error) {
+  const failure = new Error(error?.message || 'التخزين الدائم غير متاح حالياً؛ لم تُقبل التعديلات على تخزين مؤقت.');
+  failure.code = 'DURABLE_SYNC_UNAVAILABLE';
+  failure.statusCode = 503;
+  return failure;
+}
 
 function copy(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -134,7 +144,13 @@ async function applyOperations(inputs, actor) {
     } catch (error) {
       _healthy = false;
       _lastError = error.message;
+      if (REQUIRE_DURABLE_SYNC) throw durableSyncUnavailable(error);
     }
+  }
+  if (REQUIRE_DURABLE_SYNC) {
+    _healthy = false;
+    _lastError = 'لم يتم ضبط اتصال Supabase للتخزين الدائم.';
+    throw durableSyncUnavailable();
   }
   const fallback = readFallback();
   for (const input of operations) {
@@ -161,7 +177,13 @@ async function bootstrap(since) {
     } catch (error) {
       _healthy = false;
       _lastError = error.message;
+      if (REQUIRE_DURABLE_SYNC) throw durableSyncUnavailable(error);
     }
+  }
+  if (REQUIRE_DURABLE_SYNC) {
+    _healthy = false;
+    _lastError = 'لم يتم ضبط اتصال Supabase للتخزين الدائم.';
+    throw durableSyncUnavailable();
   }
   const fallback = readFallback();
   const operations = fallback.operations.filter((operation) => operation.sequence > cursor).slice(0, 500);
@@ -169,7 +191,15 @@ async function bootstrap(since) {
 }
 
 function status() {
-  return { backend: supabase && _healthy ? 'supabase' : 'fallback', supabaseConfigured: Boolean(supabase), supabaseHealthy: supabase ? _healthy : null, lastError: _lastError };
+  const durableReady = Boolean(supabase && _healthy);
+  return {
+    backend: durableReady ? 'supabase' : 'fallback',
+    supabaseConfigured: Boolean(supabase),
+    supabaseHealthy: supabase ? _healthy : null,
+    durableSyncRequired: REQUIRE_DURABLE_SYNC,
+    durableSyncReady: durableReady,
+    lastError: _lastError,
+  };
 }
 
 module.exports = { applyOperations, bootstrap, status };
