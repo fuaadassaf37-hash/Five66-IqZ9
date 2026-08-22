@@ -11,28 +11,31 @@ const rateLimit = require('express-rate-limit');
 const basicAuth = require('express-basic-auth');
 const { Server } = require('socket.io');
 const db = require('./db');
+const syncDb = require('./sync-db');
 
 const PORT = process.env.PORT || 3000;
 
-// ----- تحقق إلزامي من وجود بيانات الدخول -----
-// لا يُسمح بتشغيل السيرفر بدون حساب مشرف (ADMIN) محدَّد صراحة في .env.
-// حساب المشاهدة (VIEWER) اختياري: إن لم يُحدَّد، فكل من يملك رابط السيرفر
-// ولا يملك بيانات المشرف لن يستطيع الدخول إطلاقاً.
-const ADMIN_USER = process.env.ADMIN_USER;
-const ADMIN_PASS = process.env.ADMIN_PASS;
-const VIEWER_USER = process.env.VIEWER_USER;
-const VIEWER_PASS = process.env.VIEWER_PASS;
-
-if (!ADMIN_USER || !ADMIN_PASS) {
-  console.error('❌ يجب ضبط ADMIN_USER و ADMIN_PASS في ملف .env قبل تشغيل السيرفر (حماية إلزامية).');
-  process.exit(1);
+// ----- مصادقة الخادم الموحدة -----
+// كل بيانات مرور صحيحة تمنح الوصول نفسه. لا توجد أدوار admin أو viewer داخل التطبيق أو الخادم.
+function getBasicAuthUsers() {
+  if (process.env.BASIC_AUTH_USERS_JSON) {
+    try {
+      const users = JSON.parse(process.env.BASIC_AUTH_USERS_JSON);
+      if (users && typeof users === 'object' && Object.keys(users).length) return users;
+    } catch (_) {}
+  }
+  const users = {};
+  // دعم أسماء المتغيرات القديمة أثناء الترحيل، من دون منح أي منهما دوراً مختلفاً.
+  if (process.env.ADMIN_USER && process.env.ADMIN_PASS) users[process.env.ADMIN_USER] = process.env.ADMIN_PASS;
+  if (process.env.VIEWER_USER && process.env.VIEWER_PASS) users[process.env.VIEWER_USER] = process.env.VIEWER_PASS;
+  if (process.env.BASIC_AUTH_USER && process.env.BASIC_AUTH_PASSWORD) users[process.env.BASIC_AUTH_USER] = process.env.BASIC_AUTH_PASSWORD;
+  return users;
 }
 
-const basicAuthUsers = { [ADMIN_USER]: ADMIN_PASS };
-if (VIEWER_USER && VIEWER_PASS) {
-  basicAuthUsers[VIEWER_USER] = VIEWER_PASS;
-} else {
-  console.log('⚠ لم يتم ضبط VIEWER_USER / VIEWER_PASS — لا يوجد حساب مشاهدة منفصل، فقط حساب المشرف.');
+const basicAuthUsers = getBasicAuthUsers();
+if (!Object.keys(basicAuthUsers).length) {
+  console.error('❌ يجب ضبط BASIC_AUTH_USER/BASIC_AUTH_PASSWORD أو BASIC_AUTH_USERS_JSON قبل التشغيل.');
+  process.exit(1);
 }
 
 // المفاتيح التي يخزّنها التطبيق (نفس مفاتيح localStorage السابقة)
@@ -77,21 +80,11 @@ const authLimiter = rateLimit({
 app.use(authLimiter);
 
 // ----- حماية Basic Auth على كل شيء (الواجهة + كل الـ API) -----
-// كلا الحسابين (admin و viewer) يمكنهما الدخول ومشاهدة الموقع، لكن الكتابة
-// عبر /api/state و /api/download/upload تقتصر على حساب المشرف فقط (انظر
-// requireAdmin أدناه) — هذا يمنع حساب "العرض فقط" من أن يكون قادراً فعلياً
-// على تعديل البيانات، وهي ثغرة كانت موجودة في النسخة السابقة.
 app.use(basicAuth({
   users: basicAuthUsers,
   challenge: true,
-  realm: 'Diwan-Askari' // ملاحظة: رؤوس HTTP (WWW-Authenticate) لا تقبل حروف عربية، استخدام نص عربي هنا يسبب عطل (500) بدل رسالة تسجيل دخول (401)
+  realm: 'Five66-IqZ9'
 }));
-
-// وسيط: يسمح فقط لحساب المشرف بتنفيذ عمليات الكتابة (POST/DELETE)
-function requireAdmin(req, res, next) {
-  if (req.auth && req.auth.user === ADMIN_USER) return next();
-  return res.status(403).json({ ok: false, error: 'هذا الحساب للعرض فقط، لا يملك صلاحية التعديل' });
-}
 
 // حد إضافي وأصرم لمحاولات كتابة/قراءة الـ API لمنع إغراق السيرفر بطلبات متكررة بعد اجتياز تسجيل الدخول
 const apiLimiter = rateLimit({
@@ -107,54 +100,51 @@ app.use(express.json({ limit: '50mb' }));
 // تقديم الواجهة (index.html وملفات ثابتة، منها shamcash-photos.json و persons-photos.json إن وُجد)
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.get('/api/whoami', (req, res) => {
+  res.json({ user: req.auth?.user || null });
+});
+
 // ----- واجهة برمجية: قراءة الحالة الكاملة (متاحة لكل من admin و viewer) -----
 app.get('/api/state', async (req, res) => {
   const state = await db.readAll();
   res.json(state);
 });
 
-// ----- واجهة برمجية: حفظ/تحديث الحالة (للمشرف فقط) -----
-app.post('/api/state', requireAdmin, async (req, res) => {
+// المسار القديم للقراءة يبقى مؤقتاً لفتح البيانات السابقة، أما الكتابة فتتم فقط عبر عمليات الإصدار الدقيقة.
+app.post('/api/state', (req, res) => {
+  res.status(410).json({ ok: false, error: 'تم استبدال الحفظ الكامل بمزامنة دقيقة لكل سجل. حدّث الصفحة ثم حاول مجدداً.' });
+});
+
+app.get('/api/sync/bootstrap', async (req, res) => {
   try {
-    const { state: incoming, clientId } = req.body || {};
-    if (!incoming || typeof incoming !== 'object') {
-      return res.status(400).json({ ok: false, error: 'بيانات غير صالحة' });
-    }
-    const MAX_VALUE_LENGTH = 15 * 1024 * 1024; // 15MB كحد أقصى لكل مفتاح (نص JSON)
-    const entries = {};
-    for (const key of STATE_KEYS) {
-      if (Object.prototype.hasOwnProperty.call(incoming, key)) {
-        const value = incoming[key];
-        // القيم يجب أن تكون نصوصاً (JSON.stringify من جهة الواجهة) أو أرقام/فارغة، وليست كائنات معقدة غير متوقعة
-        if (value !== null && typeof value !== 'string' && typeof value !== 'number') {
-          return res.status(400).json({ ok: false, error: `قيمة غير صالحة للمفتاح ${key}` });
-        }
-        if (typeof value === 'string' && value.length > MAX_VALUE_LENGTH) {
-          return res.status(413).json({ ok: false, error: `حجم البيانات كبير جداً للمفتاح ${key}` });
-        }
-        entries[key] = value;
-      }
-    }
-    const saved = await db.writeMany(entries);
+    const since = Number.parseInt(req.query.since || '0', 10);
+    res.json(await syncDb.bootstrap(Number.isFinite(since) ? since : 0));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: 'تعذر جلب تحديثات المزامنة' });
+  }
+});
 
-    // إشعار جميع المستخدمين المتصلين بوجود تحديث
-    io.emit('state-changed', { clientId, updatedAt: saved._updatedAt });
-
-    res.json({ ok: true, updatedAt: saved._updatedAt });
-  } catch (e) {
-    console.error('POST /api/state error:', e);
-    res.status(500).json({ ok: false, error: 'خطأ في السيرفر' });
+app.post('/api/sync/operations', async (req, res) => {
+  try {
+    const operations = Array.isArray(req.body?.operations) ? req.body.operations : [];
+    if (!operations.length) return res.status(400).json({ ok: false, error: 'مطلوب إرسال عملية مزامنة واحدة على الأقل' });
+    const result = await syncDb.applyOperations(operations, req.auth?.user || 'server-user');
+    if (result.accepted.length) io.emit('sync:operations', { operations: result.accepted, serverSequence: result.serverSequence });
+    res.json({ results: result.results, serverSequence: result.serverSequence, backend: result.backend });
+  } catch (error) {
+    console.error('POST /api/sync/operations error:', error);
+    res.status(500).json({ ok: false, error: 'تعذر حفظ عمليات المزامنة' });
   }
 });
 
 // حالة الاتصال بـ Supabase (متاحة لكل من admin و viewer) — للتأكد قبل إعادة
 // نشر/تشغيل السيرفر أن الاتصال سليم وأنه لا توجد بيانات محفوظة محلياً فقط
 app.get('/api/sync-status', async (req, res) => {
-  res.json(db.getSyncStatus());
+  res.json({ legacy: db.getSyncStatus(), preciseSync: syncDb.status() });
 });
 
-// نسخة احتياطية يدوية: تنزيل الحالة كاملة (للمشرف فقط، تحتوي كل البيانات)
-app.get('/api/backup', requireAdmin, async (req, res) => {
+// نسخة احتياطية يدوية: متاحة لكل من يملك بيانات مرور الخادم.
+app.get('/api/backup', async (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="diwan-backup.json"');
   res.json(await db.readAll());
 });
