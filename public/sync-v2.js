@@ -106,15 +106,6 @@
     applyingRemote = false;
     refreshViews();
   }
-  async function verifyDurableBackend() {
-    var response = await fetch("/api/sync-status", { cache: "no-store" });
-    if (!response.ok) throw new Error("تعذر التحقق من التخزين الدائم");
-    var status = await response.json();
-    if (!status.preciseSync || !status.preciseSync.durableSyncReady) {
-      throw new Error("قاعدة التخزين الدائم غير جاهزة");
-    }
-    return status.preciseSync;
-  }
   async function pull() {
     var response = await fetch(BASE + "/bootstrap?since=" + encodeURIComponent(cursor), { cache: "no-store" });
     if (!response.ok) throw new Error("تعذر جلب تحديثات الخادم");
@@ -199,7 +190,6 @@
   async function start() {
     try {
       if (startRetryTimer) { clearTimeout(startRetryTimer); startRetryTimer = null; }
-      await verifyDurableBackend();
       var initialBootstrap = await pull();
       enabled = true;
       if (!initialBootstrap.serverSequence) queueInitialSnapshot();
@@ -215,7 +205,7 @@
       window.addEventListener("online", function () { pull().then(flush).catch(function () {}); });
       document.addEventListener("visibilitychange", function () { if (!document.hidden) pull().then(flush).catch(function () {}); });
       setInterval(function () { pull().then(flush).catch(function () {}); }, 5000);
-      notify("✓ المزامنة الدائمة مفعّلة — التعديلات والأرشيف محفوظة على الخادم", "success");
+      notify("✓ المزامنة الدقيقة مفعّلة", "success");
     } catch (_) {
       notify("⚠ التخزين الدائم غير متاح مؤقتاً؛ سيستمر الحفظ المحلي وستُعاد المحاولة تلقائياً.", "error");
       if (!startRetryTimer) {
@@ -223,6 +213,6 @@
       }
     }
   }
-  window.Five66Sync = { pull: pull, flush: flush, getConflicts: getConflicts, resolveConflict: resolveConflict, verifyDurableBackend: verifyDurableBackend };
+  window.Five66Sync = { pull: pull, flush: flush, getConflicts: getConflicts, resolveConflict: resolveConflict };
   if (document.readyState === "complete") setTimeout(start, 500); else window.addEventListener("load", function () { setTimeout(start, 500); });
 })();
